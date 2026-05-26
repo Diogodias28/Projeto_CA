@@ -17,19 +17,17 @@ st.set_page_config(page_title="Notify | O teu DJ Emocional", page_icon="🎧", l
 
 def aplicar_tema_global(emocao):
     cor_base = cores_emocao.get(emocao, "#000000")
-    # Usar preto sem clarear: gradiente para preto sem ir para branco
+    # Gradiente para preto
     cor_secundaria = 'rgba(0,0,0,0.6)'
     st.markdown(
         f"""
         <style>
-            /* Fundo de toda a aplicação com gradiente suave entre duas tonalidades */
             .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {{
                 background-color: {cor_base} !important;
                 background-image: linear-gradient(135deg, {cor_base}, {cor_secundaria}) !important;
                 background-repeat: no-repeat !important;
                 background-attachment: fixed !important;
             }}
-            /* Tornar a zona de chat e o rodapé em baixo transparentes */
             [data-testid="stBottom"], [data-testid="stBottom"] > div {{
                 background-color: transparent !important;
             }}
@@ -37,33 +35,6 @@ def aplicar_tema_global(emocao):
         """,
         unsafe_allow_html=True
     )
-
-
-def _shade_hex(hex_color, amount=0.25):
-    """Return a hex color lightened by amount (0..1) or darkened if amount negative."""
-    hex_color = hex_color.lstrip('#')
-    if len(hex_color) == 3:
-        hex_color = ''.join([c*2 for c in hex_color])
-    try:
-        r = int(hex_color[0:2], 16)
-        g = int(hex_color[2:4], 16)
-        b = int(hex_color[4:6], 16)
-    except Exception:
-        return '#' + hex_color
-
-    def clamp(v):
-        return max(0, min(255, int(v)))
-
-    if amount >= 0:
-        r2 = clamp(r + (255 - r) * amount)
-        g2 = clamp(g + (255 - g) * amount)
-        b2 = clamp(b + (255 - b) * amount)
-    else:
-        r2 = clamp(r * (1 + amount))
-        g2 = clamp(g * (1 + amount))
-        b2 = clamp(b * (1 + amount))
-
-    return '#{0:02x}{1:02x}{2:02x}'.format(r2, g2, b2)
 
 cores_emocao = {
     "Joy": "#C2C221", "Sadness": "#214C6C", "Anger": "#680F0F",
@@ -136,10 +107,9 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
 
 emocoes = ['Joy', 'Sadness', 'Anger', 'Fear', 'Trust', 'Disgust', 'Surprise', 'Anticipation']
 
-# Limites para evitar músicas muito fracas e favorecer variedade com qualidade.
+# Limites para evitar músicas muito fracas
 POPULARITY_MINIMA = 30
 POPULARITY_PESO_EXPONENTE = 1.4
-DISTANCE_PESO_EXPONENTE = 1.8
 
 # Palavras-chave/estilos associadas a cada emoção (usadas como "modificador" para busca/descrição)
 plutchik_modifiers = {
@@ -154,7 +124,7 @@ plutchik_modifiers = {
     "Neutral": "chill background smooth",
 }
 
-# Map Plutchik emotions to approximate target valence/energy (0..1)
+# Map Plutchik emocoes para valence/energy aproximados
 EMOTION_TO_VALENCE_ENERGY = {
     "Joy": (0.95, 0.8),  # 0.95, 0.65
     "Sadness": (0.05, 0.3),  # -0.9, -0.4
@@ -167,8 +137,8 @@ EMOTION_TO_VALENCE_ENERGY = {
     "Neutral": (0.5, 0.5)
 }
 
-# Target emotion for gradual progression (calm + happy)
-TARGET_EMOTION_MOOD = ("Joy", (0.8, 0.4))  # High valence, moderate-low energy = calm and happy
+# Emocao alvo para a playlist final
+TARGET_EMOTION_MOOD = ("Joy", (0.8, 0.4))  # Alta valence, energy moderada (feliz e neutro)
 
 GENEROS_SUGERIDOS = [
     "pop",
@@ -235,7 +205,6 @@ def carregar_dataset():
 
 @st.cache_resource
 def carregar_generos_disponiveis():
-    """Lê os géneros únicos do dataset."""
     df_local = carregar_dataset()
     if df_local is None or len(df_local) == 0:
         return []
@@ -269,13 +238,13 @@ def formatar_dropdown(opcao):
     return opcao.title()
 
 
-def select_tracks_from_dataset(genres, target_val, target_eng, tol=0.25, max_results=TARGET_TRACKS):
+def select_tracks_from_dataset(genres, target_val, target_eng, tol=0.30, max_results=TARGET_TRACKS, return_debug=False, exclude_uris=None, selection_seed=None):
     import time
     start = time.time()
     
     df_local = carregar_dataset()
     if df_local is None or len(df_local) == 0:
-        return []
+        return ([], []) if return_debug else []
 
     val_col = next((c for c in df_local.columns if 'valence' in c.lower()), None)
     eng_col = next((c for c in df_local.columns if 'energy' in c.lower()), None)
@@ -283,9 +252,11 @@ def select_tracks_from_dataset(genres, target_val, target_eng, tol=0.25, max_res
     uri_col = next((c for c in df_local.columns if 'uri' in c.lower() or 'track_uri' in c.lower()), None)
     id_col = next((c for c in df_local.columns if c.lower() in ('track_id','id','spotify_id')), None)
     genre_col = next((c for c in df_local.columns if 'genre' in c.lower()), None)
+    title_col = next((c for c in df_local.columns if c.lower() in ('track_name', 'name', 'song_name')), None)
+    artist_col = next((c for c in df_local.columns if c.lower() in ('artists', 'artist', 'track_artist')), None)
 
     if not val_col or not eng_col:
-        return []
+        return ([], []) if return_debug else []
 
     mask_val_eng = pd.notna(df_local[val_col]) & pd.notna(df_local[eng_col])
     df_filtered = df_local[mask_val_eng].copy()
@@ -303,7 +274,7 @@ def select_tracks_from_dataset(genres, target_val, target_eng, tol=0.25, max_res
         df_filtered = df_filtered[genre_mask]
     
     if len(df_filtered) == 0:
-        return []
+        return ([], []) if return_debug else []
     
     # Distancia euclidiana valence-energy
     distances = ((df_filtered[val_col].astype(float) - target_val) ** 2 + 
@@ -315,27 +286,27 @@ def select_tracks_from_dataset(genres, target_val, target_eng, tol=0.25, max_res
     df_candidates['_dist'] = distances[mask_tol]
     
     if len(df_candidates) == 0:
-        return []
+        return ([], []) if return_debug else []
 
+    sort_cols = ['_dist']
+    ascending = [True]
     if pop_col:
         df_candidates['_pop'] = pd.to_numeric(df_candidates[pop_col], errors='coerce').fillna(0)
-        dist_weights = 1 / (1 + df_candidates['_dist'].clip(lower=0)) ** DISTANCE_PESO_EXPONENTE
-        pop_values = df_candidates['_pop'].clip(lower=POPULARITY_MINIMA)
-        pop_weights = (pop_values / pop_values.max()) ** POPULARITY_PESO_EXPONENTE if pop_values.max() > 0 else 1.0
-        weights = dist_weights * pop_weights
-        weights = weights.where(weights > 0, 1.0)
-    else:
-        weights = 1 / (1 + df_candidates['_dist'].clip(lower=0)) ** DISTANCE_PESO_EXPONENTE
+        sort_cols.append('_pop')
+        ascending.append(False)
 
-    # Amostragem ponderada: mantém o mood, mas varia entre execuções.
-    if len(df_candidates) > max_results:
-        df_candidates = df_candidates.sample(n=max_results, weights=weights, replace=False)
-    else:
-        df_candidates = df_candidates.sample(frac=1, weights=weights)
+    # Ordem base: mais perto do mood primeiro, popularidade como desempate.
+    df_candidates = df_candidates.sort_values(sort_cols, ascending=ascending)
 
-    df_candidates = df_candidates.sort_values(['_dist', pop_col] if pop_col else ['_dist'])
+    # Pequena variação controlada entre candidatos próximos para evitar repetir sempre as mesmas músicas.
+    if selection_seed is not None and len(df_candidates) > 1:
+        top_window = min(len(df_candidates), max(max_results * 4, max_results + 12))
+        df_top = df_candidates.iloc[:top_window].copy().sample(frac=1, random_state=int(selection_seed))
+        df_candidates = pd.concat([df_top, df_candidates.iloc[top_window:]], ignore_index=False)
 
+    excluded = set(exclude_uris or [])
     uris = []
+    debug_rows = []
     for _, row in df_candidates.iterrows():
         if len(uris) >= max_results:
             break
@@ -344,33 +315,64 @@ def select_tracks_from_dataset(genres, target_val, target_eng, tol=0.25, max_res
             uri = str(row[uri_col])
         elif id_col and pd.notna(row.get(id_col)):
             uri = f"spotify:track:{row[id_col]}"
-        if uri and uri not in uris:
+        if uri and uri not in uris and uri not in excluded:
             uris.append(uri)
+            if return_debug:
+                dist_val = float(row.get('_dist', 0.0))
+                pop_raw = pd.to_numeric(row.get(pop_col), errors='coerce') if pop_col else None
+                pop_val = None if pop_raw is None or pd.isna(pop_raw) else int(pop_raw)
+                debug_rows.append({
+                    "uri": uri,
+                    "track_name": str(row.get(title_col, "Unknown")) if title_col else "Unknown",
+                    "artists": str(row.get(artist_col, "Unknown")) if artist_col else "Unknown",
+                    "genre": str(row.get(genre_col, "Unknown")) if genre_col else "Unknown",
+                    "valence": round(float(row.get(val_col, 0.0)), 3),
+                    "energy": round(float(row.get(eng_col, 0.0)), 3),
+                    "popularity": pop_val,
+                    "distance_to_target": round(dist_val, 4),
+                    "target_valence": round(float(target_val), 3),
+                    "target_energy": round(float(target_eng), 3),
+                    "reason": (
+                        f"Closest match to the current mood step (distance {dist_val:.4f})"
+                        + (f", popularity {pop_val}" if pop_val is not None else "")
+                        + (f", genre {row.get(genre_col)}" if genre_col and pd.notna(row.get(genre_col)) else "")
+                    )
+                })
     
     elapsed = time.time() - start
     print(f'  [tol={tol:.2f}] {target_val:.2f},{target_eng:.2f}: {len(uris)}/{max_results} em {elapsed:.2f}s')
-    return uris
+    return (uris, debug_rows) if return_debug else uris
 
 
-def select_tracks_progressive(genres, progressao_mood, max_results=TARGET_TRACKS):
-    """
-    Seleciona faixas usando a progressão de (valence, energy) ao longo da playlist.
-    """
+def select_tracks_progressive(genres, progressao_mood, max_results=TARGET_TRACKS, return_debug=False, selection_seed=None):
     if not progressao_mood:
-        return []
+        return ([], []) if return_debug else []
     
     all_uris = []
+    all_debug = []
+    selected_uris = set()
     uris_per_step = max_results // len(progressao_mood)
     remainder = max_results % len(progressao_mood)
     
     for i, (val, eng) in enumerate(progressao_mood):
-        # Adiciona 1 extra aos primeiros 'remainder' passos para distribuir os que faltam
         n = uris_per_step + (1 if i < remainder else 0)
-        step_uris = select_tracks_from_dataset(genres, val, eng, tol=0.25, max_results=n)
+        step_uris, step_debug = select_tracks_from_dataset(
+            genres,
+            val,
+            eng,
+            tol=0.30,
+            max_results=n,
+            return_debug=True,
+            exclude_uris=selected_uris,
+            selection_seed=(None if selection_seed is None else selection_seed + i),
+        )
         all_uris.extend(step_uris)
+        all_debug.extend([{**item, "passo": i + 1} for item in step_debug])
+        selected_uris.update(step_uris)
     
     seen = set()
     final = []
+    final_debug = []
     for u in all_uris:
         if u not in seen:
             seen.add(u)
@@ -378,48 +380,100 @@ def select_tracks_progressive(genres, progressao_mood, max_results=TARGET_TRACKS
         if len(final) >= max_results:
             break
 
+    seen_debug = set()
+    for item in all_debug:
+        uri = item.get("uri")
+        if uri and uri not in seen_debug and uri in seen:
+            seen_debug.add(uri)
+            final_debug.append(item)
+        if len(final_debug) >= max_results:
+            break
+
     if len(final) < max_results:
         faltam = max_results - len(final)
-        for tol_extra in (0.30, 0.35, 0.45, 0.55):
+        for tol_extra in (0.35, 0.45, 0.60, 0.80, 1.00, 1.50):
             if faltam <= 0:
                 break
-            extras = select_tracks_from_dataset(
+            extras, extras_debug = select_tracks_from_dataset(
                 genres,
                 TARGET_EMOTION_MOOD[1][0],
                 TARGET_EMOTION_MOOD[1][1],
                 tol=tol_extra,
                 max_results=faltam,
+                return_debug=True,
+                exclude_uris=selected_uris,
+                selection_seed=(None if selection_seed is None else selection_seed + 100 + int(tol_extra * 100)),
             )
-            for uri in extras:
+            for uri, info in zip(extras, extras_debug):
                 if uri not in seen:
                     seen.add(uri)
+                    selected_uris.add(uri)
                     final.append(uri)
+                    if info.get("uri") not in seen_debug:
+                        seen_debug.add(info.get("uri"))
+                        final_debug.append({**info, "passo": info.get("passo", "fallback")})
                     faltam -= 1
                     if len(final) >= max_results:
                         break
 
-    # Se ainda faltar, tenta sem filtro de género para preencher o resto da playlist
+    # Se ainda faltar, completa apenas com músicas dos mesmos géneros, mesmo que estejam mais longe do alvo.
     if len(final) < max_results:
         faltam = max_results - len(final)
-        for tol_extra in (0.60, 0.80, 1.0):
+        for tol_extra in (1.75, 2.00, 999.0):
             if faltam <= 0:
                 break
-            extras = select_tracks_from_dataset(
-                [],  # empty genres => no genre filter
+            extras, extras_debug = select_tracks_from_dataset(
+                genres,
                 TARGET_EMOTION_MOOD[1][0],
                 TARGET_EMOTION_MOOD[1][1],
                 tol=tol_extra,
                 max_results=faltam,
+                return_debug=True,
+                exclude_uris=selected_uris,
+                selection_seed=(None if selection_seed is None else selection_seed + 200 + int(tol_extra * 100)),
             )
-            for uri in extras:
+            for uri, info in zip(extras, extras_debug):
                 if uri not in seen:
                     seen.add(uri)
+                    selected_uris.add(uri)
                     final.append(uri)
+                    if info.get("uri") not in seen_debug:
+                        seen_debug.add(info.get("uri"))
+                        final_debug.append({**info, "passo": info.get("passo", "fallback")})
+                    faltam -= 1
+                    if faltam <= 0:
+                        break
+
+    # Último preenchimento: usa os mesmos géneros de forma global para garantir que a playlist chega aos 20.
+    if len(final) < max_results:
+        faltam = max_results - len(final)
+        seen_genres_fill = set(final)
+        for alvo_val, alvo_eng in progressao_mood:
+            if faltam <= 0:
+                break
+            extras, extras_debug = select_tracks_from_dataset(
+                genres,
+                alvo_val,
+                alvo_eng,
+                tol=999.0,
+                max_results=faltam,
+                return_debug=True,
+                exclude_uris=selected_uris,
+                selection_seed=(None if selection_seed is None else selection_seed + 300 + i),
+            )
+            for uri, info in zip(extras, extras_debug):
+                if uri not in seen_genres_fill:
+                    seen_genres_fill.add(uri)
+                    selected_uris.add(uri)
+                    final.append(uri)
+                    if info.get("uri") not in seen_debug:
+                        seen_debug.add(info.get("uri"))
+                        final_debug.append({**info, "passo": info.get("passo", "global-fill")})
                     faltam -= 1
                     if faltam <= 0:
                         break
     
-    return final[:max_results]
+    return (final[:max_results], final_debug[:max_results]) if return_debug else final[:max_results]
 
 @st.cache_data(ttl=20)
 def obter_modelos_ollama():
@@ -484,8 +538,9 @@ def gerar_resposta_empatica(texto_utilizador, emocao_detetada, modelo_ollama):
 # --- GESTÃO DE SESSÃO E HISTÓRICO DE CHAT ---
 if "autenticado" not in st.session_state: st.session_state.autenticado = False
 if "username" not in st.session_state: st.session_state.username = ""
-# Criar a memória do chat para as caixinhas de texto aparecerem em sequência
+# Criar a memória do chat para as caixas de texto aparecerem em sequência
 if "historico_chat" not in st.session_state: st.session_state.historico_chat = []
+if "selection_nonce" not in st.session_state: st.session_state.selection_nonce = 0
 
 # --- ECRÃ DE AUTENTICAÇÃO ---
 if not st.session_state.autenticado:
@@ -560,7 +615,7 @@ else:
     if not generos_disponiveis:
         st.warning("Não foi possível carregar os géneros do dataset. Verifica a coluna 'track_genre'.")
         generos_disponiveis = ['acoustic']
-    # 6. A Barra de Pesquisa
+    # A Barra de Pesquisa
     escolhas_brutas = st.multiselect(
         "Available Genres:",
         options=generos_disponiveis,
@@ -568,13 +623,16 @@ else:
         default=[]
     )
 
-    # 7. Remover os separadores caso o utilizador os selecione por engano
+    # Remover os separadores caso o utilizador os selecione por engano
     generos_preferidos = [g for g in escolhas_brutas if g not in ["────────────────────── GÉNEROS SUGERIDOS ───────────────────────", "────────────────────── RESTANTES GÉNEROS ───────────────────────"]]
 
     # Mostrar o histórico do chat
     for msg in st.session_state.historico_chat:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
+            if "emocao" in msg:
+                st.markdown(f"-> **Final verdict:** {msg['emocao']} ({msg.get('confianca_emocao_%', 0):.1f}%)")
+                aplicar_fundo_emocional(msg["emocao"])
             if "playlist_url" in msg and msg["playlist_url"] != "#":
                 st.markdown(f"-> **Emotion detected:** {msg['emocao']}")
                 # Apresenta apenas o link inline de forma limpa, sem forçar abertura de pop-ups
@@ -582,6 +640,10 @@ else:
             if "analise" in msg:
                 with st.expander("View complete emotional analysis"):
                     st.json(msg["analise"])
+            if "debug_musicas" in msg and msg["debug_musicas"]:
+                with st.expander("Debug da seleção de músicas"):
+                    st.caption("Mostra as faixas escolhidas e o motivo principal da seleção para depuração.")
+                    st.dataframe(pd.DataFrame(msg["debug_musicas"]), use_container_width=True)
 
     # CAIXA DE INPUT ESTILO CHATBOT
     if desabafo := st.chat_input("How are you feeling today? Share your thoughts with me..."):
@@ -592,6 +654,9 @@ else:
             st.session_state.historico_chat.append({"role": "user", "content": desabafo})
             with st.chat_message("user"):
                 st.write(desabafo)
+
+            st.session_state.selection_nonce += 1
+            selection_seed = st.session_state.selection_nonce
                 
             with st.spinner('A processar e a sintonizar o Spotify...'):
                 # Analisar a emoção usando o modelo local
@@ -607,8 +672,8 @@ else:
                 }
                 analise_emocoes["escolhida"] = emocao_final
                 analise_emocoes["confianca_escolhida_%"] = round(percentagem * 100, 2)
+                confianca_emocao = round(percentagem * 100, 2)
 
-                aplicar_fundo_emocional(emocao_final)
                 registo["last_emotion"] = emocao_final
                 utilizadores[st.session_state.username] = registo
                 guardar_utilizadores(utilizadores)
@@ -633,45 +698,21 @@ else:
                 )
 
                 try:
-                    uris_musicas = select_tracks_progressive(generos_preferidos, progressao, max_results=TARGET_TRACKS)
+                    uris_musicas, debug_musicas = select_tracks_progressive(
+                        generos_preferidos,
+                        progressao,
+                        max_results=TARGET_TRACKS,
+                        return_debug=True,
+                        selection_seed=selection_seed,
+                    )
                 except Exception as e:
                     print(f"Erro ao selecionar do dataset local com progressão: {e}")
+                    uris_musicas = []
+                    debug_musicas = []
                 
-                # Fallback seguro caso não consigamos 20 músicas
+                # Fallback caso não consigamos 20 músicas
                 if len(uris_musicas) < TARGET_TRACKS:
                     print(f"Fallback ativado! Obtivemos {len(uris_musicas)} músicas, esperávamos {TARGET_TRACKS}")
-
-                # Verificar quantas das músicas selecionadas correspondem efetivamente aos géneros preferidos (pode haver músicas fora do género para preencher a playlist)
-                num_genre_matched = 0
-                try:
-                    df_local = carregar_dataset()
-                    if df_local is not None and len(uris_musicas) > 0:
-                        genre_col = next((c for c in df_local.columns if 'genre' in c.lower()), None)
-                        id_col = next((c for c in df_local.columns if c.lower() in ('track_id','id','spotify_id')), None)
-                        uri_col = next((c for c in df_local.columns if 'uri' in c.lower() or 'track_uri' in c.lower()), None)
-                        # Criar um mapping de ID/URI para género para verificar os géneros das músicas selecionadas
-                        mapping = {}
-                        if id_col and genre_col:
-                            tmp = df_local[[id_col, genre_col]].dropna()
-                            for _, r in tmp.iterrows():
-                                mapping[str(r[id_col])] = str(r[genre_col]).strip().lower()
-                        elif uri_col and genre_col:
-                            tmp = df_local[[uri_col, genre_col]].dropna()
-                            for _, r in tmp.iterrows():
-                                mapping[str(r[uri_col])] = str(r[genre_col]).strip().lower()
-
-                        wanted_lower = {g.lower() for g in generos_preferidos}
-                        for u in uris_musicas:
-                            uid = None
-                            if u.startswith('spotify:track:'):
-                                uid = u.split(':')[-1]
-                                gen = mapping.get(uid) or mapping.get(u)
-                            else:
-                                gen = mapping.get(u)
-                            if gen and gen in wanted_lower:
-                                num_genre_matched += 1
-                except Exception:
-                    num_genre_matched = 0
 
                 # CRIAR OU ATUALIZAR A PLAYLIST REAL NA CONTA DO SPOTIFY
                 url_playlist = "#"
@@ -725,8 +766,8 @@ else:
                 # Guardar no histórico e atualizar o ecrã
                 if playlist_ok:
                     estado_playlist = f"I updated the playlist with {len(uris_musicas)} tracks combining: {', '.join(generos_preferidos)}."
-                    if num_genre_matched < len(uris_musicas):
-                        estado_playlist += f" (Note: {len(uris_musicas)-num_genre_matched} tracks were added outside the selected genres to complete {TARGET_TRACKS} tracks)."
+                    if len(uris_musicas) < TARGET_TRACKS:
+                        estado_playlist += f" (Note: only {len(uris_musicas)} tracks were available within the selected genres.)"
                 else:
                     estado_playlist = "I couldn't create or update the Spotify playlist. Click in the reauthenticate button in the sidebar and try again, or check the console for errors."
 
@@ -735,7 +776,9 @@ else:
                     "role": "assistant", 
                     "content": conteudo_bot,
                     "emocao": emocao_final,
+                    "confianca_emocao_%": confianca_emocao,
                     "playlist_url": url_playlist,
-                    "analise": analise_emocoes
+                    "analise": analise_emocoes,
+                    "debug_musicas": debug_musicas
                 })
                 st.rerun()
