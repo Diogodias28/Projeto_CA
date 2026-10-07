@@ -1,160 +1,135 @@
-# Projeto_CA
+# Notify — Emotion-Aware Music Recommendation
 
-Sistema de recomendação musical orientado por emoções, com classificação de texto, integração com Spotify e geração de respostas empáticas através do Ollama.
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![PyTorch](https://img.shields.io/badge/ML-PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Hugging Face](https://img.shields.io/badge/NLP-DistilBERT-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/)
+[![Spotify](https://img.shields.io/badge/Integration-Spotify-1DB954?logo=spotify&logoColor=white)](https://developer.spotify.com/)
+[![Ollama](https://img.shields.io/badge/LLM-Ollama-black)](https://ollama.com/)
 
-## Visão geral
+Notify is an emotion-aware music recommendation application developed for the **Affective Computing** course of the **Master's Degree in Artificial Intelligence at the University of Minho (UMinho)**.
 
-O projeto tem três partes principais:
+## Problem and solution
 
-1. Preparação de dados e criação do dataset de emoções em formato Plutchik.
-2. Treino de um classificador de emoções com DistilBERT.
-3. Aplicação final em Streamlit, com autenticação, análise emocional, integração com Spotify e resposta textual gerada pelo Ollama.
+People often look for music that matches how they feel, but generic genre-based recommendation does not capture the emotional context of a message. Notify addresses this problem by classifying a user's text into one of eight Plutchik emotions and using that signal to generate a progressive 20-track playlist.
 
-## Origem dos dados
+The application combines:
 
-### Dataset de emoções
+- a locally fine-tuned DistilBERT classifier for emotion detection;
+- a local Spotify track dataset for deterministic, feature-based selection;
+- Spotify OAuth for creating or updating playlists;
+- an optional local Ollama model for concise empathetic responses.
 
-O dataset usado para treinar o classificador de emoções vem do GoEmotions, através da biblioteca `datasets` da Hugging Face:
+## Features and technical architecture
 
-- GoEmotions: https://huggingface.co/datasets/go_emotions
+### Main features
 
-O script [`data_preparation.py`](data_preparation.py) faz o download do dataset, mapeia as labels originais para 8 emoções de Plutchik e gera o ficheiro [`dataset_plutchik.csv`](dataset_plutchik.csv).
+- Local account registration and login for the demo.
+- Text emotion classification into `Joy`, `Sadness`, `Anger`, `Fear`, `Trust`, `Disgust`, `Surprise`, or `Anticipation`.
+- Genre filtering with a local Spotify tracks dataset.
+- Recommendation based on `valence`, `energy`, `popularity`, and genre.
+- Gradual mood progression from the detected emotion towards a positive target mood.
+- Spotify playlist creation or replacement through OAuth.
+- Optional local empathetic response generation through Ollama.
+- Fallback behaviour when Ollama or Spotify is unavailable.
 
-### Dataset musical
+### Architecture
 
-O dataset de músicas usado para selecionar as faixas da playlist vem do Kaggle:
+1. `data_preparation.py` downloads GoEmotions through Hugging Face `datasets`, maps the original labels to the Plutchik taxonomy, and writes `dataset_plutchik.csv`.
+2. `model_training.py` fine-tunes `distilbert-base-uncased` with Hugging Face Transformers and stores the model/tokenizer in `modelo/`.
+3. `App.py` loads the local classifier and `dataset/spotify_musics_limpo.csv`, classifies user input, selects tracks, calls Ollama when available, and manages Spotify playlists.
+4. `AvaliarModelo.py` evaluates the trained classifier against the prepared dataset.
 
-- Spotify Tracks Dataset: https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset
+The project is a local Streamlit application. The LLM and emotion classifier run locally; Spotify is the only external service required to create a playlist.
 
-Depois de descarregado, o ficheiro limpo deve ficar em:
+## Installation and execution
 
-- [`dataset/spotify_musics_limpo.csv`](dataset/spotify_musics_limpo.csv)
+### Requirements
 
-Este ficheiro é o que a aplicação usa para escolher músicas com base em `valence`, `energy`, `popularity` e `track_genre`.
+- Python 3.10 or newer.
+- A Spotify Developer application if playlist creation is required.
+- Ollama is optional and only required for generated empathetic responses.
+- Enough disk space and memory for the Hugging Face model and datasets.
 
-## Estrutura do projeto
+### 1. Install Python dependencies
 
-- [`App.py`](App.py) - aplicação principal em Streamlit.
-- [`data_preparation.py`](data_preparation.py) - criação do dataset de emoções em Plutchik.
-- [`model_training.py`](model_training.py) - treino do modelo de classificação.
-- [`requirements.txt`](requirements.txt) - dependências Python.
-- [`dataset/`](dataset) - dataset musical.
-- [`modelo/`](modelo) - modelo e tokenizer treinados.
-- [`resultados/`](resultados) - checkpoints e outputs do treino.
-- [`utilizadores.json`](utilizadores.json) - dados locais de utilizadores da demo.
+From the repository root:
 
-## Requisitos
-
-- Python 3.10 ou superior.
-- Conta Spotify Developer para autenticação OAuth (Estamos a utilizar uma conta com Premium já para criar as playlists). 
-- Ollama instalado localmente, para usar a geração empática por LLM.
-
-## Instalação
-
-### 1. Instalar dependências
-
-```cmd
-pip install -r requirements.txt
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-## Preparação dos dados e treino
+### 2. Configure Spotify without committing credentials
 
-### 1. Gerar o dataset em Plutchik
+Copy `.env.example` to `.env` and fill in the values:
 
-```cmd
+```powershell
+Copy-Item .env.example .env
+```
+
+Set the same values in the shell before starting the app:
+
+```powershell
+$env:SPOTIFY_CLIENT_ID = "your_client_id"
+$env:SPOTIFY_CLIENT_SECRET = "your_client_secret"
+$env:SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8080"
+```
+
+Add `http://127.0.0.1:8080` as a Redirect URI in the Spotify Developer Dashboard. The first playlist operation opens the Spotify OAuth flow and creates `.spotify_cache`; this file must remain local.
+
+### 3. Prepare the emotion dataset and model
+
+Run these commands from the repository root:
+
+```powershell
 python data_preparation.py
-```
-
-Isto cria o ficheiro [`dataset_plutchik.csv`](dataset_plutchik.csv).
-
-### 2. Treinar o modelo de emoções
-
-```cmd
 python model_training.py
 ```
 
-No fim deste passo, o modelo e o tokenizer ficam guardados na pasta [`modelo/`](modelo).
+The first command creates `dataset_plutchik.csv`. The second downloads `distilbert-base-uncased`, fine-tunes it, and writes the resulting model to `modelo/`. Training can take several minutes and benefits from a GPU.
 
-## Configuração do dataset musical
+### 4. Provide the music dataset
 
-1. Descarrega o dataset original do Kaggle:
-	- https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset
-2. Pipeline de limpeza(opcional)
-3. Garante que o ficheiro final está em [`dataset/spotify_musics_limpo.csv`](dataset/spotify_musics_limpo.csv).
+Download the [Spotify Tracks Dataset from Kaggle](https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset), clean it if necessary, and place the resulting CSV at:
 
-O script [`App.py`](App.py) procura esse ficheiro diretamente para construir as playlists.
-
-## Configuração do Ollama
-
-O Ollama é opcional, mas é o componente usado para gerar respostas curtas e empáticas no chat.
-
-### 1. Instalar o Ollama
-
-- https://ollama.com
-
-### 2. Arrancar o servidor
-
-```cmd
-ollama serve
+```text
+dataset/spotify_musics_limpo.csv
 ```
 
-### 3. Fazer download de um modelo
+The application expects a genre column (for example, `track_genre`), a Spotify track identifier, and audio/features columns including `valence`, `energy`, and `popularity`.
 
-```cmd
+### 5. Optional: start Ollama
+
+Install Ollama, then download and start a model:
+
+```powershell
 ollama pull llama3
-```
-
-### 4. Verificar os modelos disponíveis
-
-```cmd
-ollama list
-```
-
-O `App.py` consulta o Ollama em `http://localhost:11434/api/tags` e usa `POST /api/generate` para obter a resposta textual.
-
-## Como executar a demo
-
-1. Garantir que o dataset musical está em [`dataset/spotify_musics_limpo.csv`](dataset/spotify_musics_limpo.csv).
-2. Garantir que o modelo treinado está na pasta [`modelo/`](modelo).
-3. Iniciar o Ollama com `ollama serve`.
-4. Abrir um terminal na raiz do projeto e correr:
-
-```cmd
-streamlit run App.py
-```
-
-5. Abrir o URL mostrado pelo Streamlit no browser.
-6. Fazer login ou criar uma conta local.
-7. Selecionar um ou mais géneros.
-8. Escrever uma mensagem no chat.
-9. A aplicação:
-	- classifica a emoção com o modelo local;
-	- gera uma resposta empática via Ollama, se disponível;
-	- escolhe músicas do dataset;
-	- cria ou atualiza uma playlist no Spotify e devolve o link.
-
-## Reproduzir os resultados
-
-Para reproduzir a demo e os resultados do projeto, segue esta ordem:
-
-```cmd
-python data_preparation.py
-python model_training.py
 ollama serve
+```
+
+The application uses Ollama at `http://localhost:11434`. If it is not running, Notify keeps working with a local fallback response.
+
+### 6. Run the Streamlit application
+
+With the virtual environment active and the required files in place:
+
+```powershell
 streamlit run App.py
 ```
 
-## Notas importantes
+Open the URL printed by Streamlit, sign in with a local demo account, choose genres, and submit a message. Notify detects the emotion, selects the tracks, generates the response, and creates or updates the Spotify playlist when Spotify credentials are configured.
 
-- O modelo de emoção é treinado localmente; o treino pode demorar dependendo da máquina.
-- O ficheiro [`utilizadores.json`](utilizadores.json) guarda utilizadores da demo em disco.
-- Se o Ollama não estiver disponível, a app continua a funcionar com uma resposta de fallback.
-- A playlist pode ser criada como nova ou substituir uma playlist existente, dependendo da URL configurada na sidebar da app.
+## Attribution
 
-## Referências
+This project was designed and implemented collaboratively as academic coursework for the **Affective Computing** course in the **Master's Degree in Artificial Intelligence at the University of Minho (UMinho)**.
 
-- GoEmotions dataset: https://huggingface.co/datasets/go_emotions
-- Spotify Tracks Dataset: https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset
-- Ollama: https://ollama.com
-- Streamlit: https://streamlit.io
-- Hugging Face Transformers: https://huggingface.co/docs/transformers
+## References
+
+- [GoEmotions](https://huggingface.co/datasets/go_emotions)
+- [Spotify Tracks Dataset](https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset)
+- [Spotify Web API](https://developer.spotify.com/documentation/web-api)
+- [Ollama](https://ollama.com/)
+- [Hugging Face Transformers](https://huggingface.co/docs/transformers)

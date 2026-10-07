@@ -10,6 +10,9 @@ import pandas as pd
 import json
 import os
 import hashlib
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Notify | O teu DJ Emocional", page_icon="🎧", layout="centered")
@@ -89,21 +92,23 @@ except:
     st.error("Erro ao carregar o modelo de IA. Verifica a pasta './modelo'")
 
 # --- CONFIGURAÇÃO AUTENTICAÇÃO DO SPOTIFY ---
-CLIENT_ID = "4ddae513ee4c4982b7f8615380c219ce"
-CLIENT_SECRET = "c617602e6a4342fa99933a4f3a3e45e1"
-REDIRECT_URI = "http://127.0.0.1:8080"
+CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "").strip()
+CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "").strip()
+REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8080").strip()
 # Pedimos permissões para criar/editar playlists públicas e privadas.
 SCOPE = "playlist-modify-public playlist-modify-private playlist-read-private"
 CACHE_PATH = ".spotify_cache"
 
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    redirect_uri=REDIRECT_URI,
-    scope=SCOPE,
-    cache_path=CACHE_PATH,
-    show_dialog=True
-))
+sp = None
+if CLIENT_ID and CLIENT_SECRET:
+    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        redirect_uri=REDIRECT_URI,
+        scope=SCOPE,
+        cache_path=CACHE_PATH,
+        show_dialog=True
+    ))
 
 emocoes = ['Joy', 'Sadness', 'Anger', 'Fear', 'Trust', 'Disgust', 'Surprise', 'Anticipation']
 
@@ -190,9 +195,7 @@ def gerar_progressao_mood(
 def carregar_dataset():
     import time
     start = time.time()
-    path = "C:\\Users\\diogo\\Desktop\\UNI\\CA\\Trabalho\\Projeto_CA\\dataset\\spotify_musics_limpo.csv"
-    if not path:
-        return None
+    path = os.path.join("dataset", "spotify_musics_limpo.csv")
     try:
         df = pd.read_csv(path, low_memory=False)
         elapsed = time.time() - start
@@ -717,7 +720,7 @@ else:
                 # CRIAR OU ATUALIZAR A PLAYLIST REAL NA CONTA DO SPOTIFY
                 url_playlist = "#"
                 playlist_ok = False
-                if uris_musicas:
+                if uris_musicas and sp is not None:
                     try:
                         # Verificar o ID do utilizador autenticado para criar a playlist
                         try:
@@ -762,6 +765,8 @@ else:
                     except Exception as e:
                         print(f"Erro geral do Spotify ao manipular playlist: {e}")
                         resposta_bot += f" (Erro do Spotify: {e})"
+                elif uris_musicas:
+                    resposta_bot += " (Spotify credentials are not configured; the playlist was not created.)"
 
                 # Guardar no histórico e atualizar o ecrã
                 if playlist_ok:

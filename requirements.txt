@@ -1,6 +1,7 @@
 streamlit>=1.25.0
 pandas>=1.5.3
 numpy>=1.25.0
+datasets>=2.14.0
 spotipy>=2.22.0
 transformers>=4.30.0
 torch>=2.0.1
